@@ -3,5 +3,6 @@ uvicorn
 motor
 python-dotenv
 pydantic
+pydantic-settings
 cryptography
 apscheduler
