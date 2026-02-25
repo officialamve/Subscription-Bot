@@ -6,3 +6,4 @@ pydantic
 pydantic-settings
 cryptography
 apscheduler
+razorpay
