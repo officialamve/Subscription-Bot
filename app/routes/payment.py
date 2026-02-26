@@ -1,6 +1,8 @@
 import razorpay
 import hmac
 import hashlib
+import requests
+import time
 
 from fastapi import APIRouter, HTTPException, Request
 from bson import ObjectId
@@ -11,16 +13,17 @@ from app.config import settings
 
 router = APIRouter()
 
-import requests
-
+# -------------------------
+# Razorpay Client Setup
+# -------------------------
 session = requests.Session()
 session.timeout = 10
 
 razorpay_client = razorpay.Client(
     auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
 )
-
 razorpay_client.session = session
+
 
 # -------------------------
 # CREATE ORDER
@@ -28,27 +31,17 @@ razorpay_client.session = session
 @router.post("/payment/create-order")
 async def create_order(plan_id: str, user_id: int):
 
+    # Validate ObjectId
     try:
         object_id = ObjectId(plan_id)
-    except:
+    except Exception:
         raise HTTPException(status_code=400, detail="Invalid plan_id")
 
     plan = await db.plans.find_one({"_id": object_id, "is_active": True})
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
-    # 1️⃣ Prevent duplicate active subscription
-    existing_subscription = await db.subscriptions.find_one({
-        "user_id": user_id,
-        "creator_id": plan["creator_id"],
-        "is_active": True,
-        "end_date": {"$gt": datetime.utcnow()}
-    })
-
-    if existing_subscription:
-        raise HTTPException(status_code=400, detail="Already subscribed")
-
-    # 2️⃣ Reuse existing pending order
+    # Reuse existing pending order
     existing_order = await db.orders.find_one({
         "user_id": user_id,
         "plan_id": object_id,
@@ -63,16 +56,26 @@ async def create_order(plan_id: str, user_id: int):
             "key_id": settings.RAZORPAY_KEY_ID
         }
 
-    # 3️⃣ Create new Razorpay order
-    try:
-        order = razorpay_client.order.create({
-            "amount": amount_paise,
-            "currency": "INR",
-            "payment_capture": 1
-        })
-    except Exception as e:
-        print("Razorpay Error:", str(e))
-        raise HTTPException(status_code=500, detail="Payment gateway connection failed")
+    amount_paise = plan["price"] * 100
+
+    # Retry logic (3 attempts)
+    order = None
+    for attempt in range(3):
+        try:
+            order = razorpay_client.order.create({
+                "amount": amount_paise,
+                "currency": "INR",
+                "payment_capture": 1
+            })
+            break
+        except Exception as e:
+            print(f"Razorpay attempt {attempt + 1} failed:", str(e))
+            if attempt == 2:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Payment gateway temporarily unavailable"
+                )
+            time.sleep(1)
 
     order_data = {
         "user_id": user_id,
@@ -102,7 +105,7 @@ async def verify_payment(request: Request):
 
     try:
         data = await request.json()
-    except:
+    except Exception:
         raise HTTPException(status_code=400, detail="Invalid or empty JSON body")
 
     razorpay_order_id = data.get("razorpay_order_id")
@@ -112,7 +115,7 @@ async def verify_payment(request: Request):
     if not all([razorpay_order_id, razorpay_payment_id, razorpay_signature]):
         raise HTTPException(status_code=400, detail="Invalid payment data")
 
-    # Generate expected signature
+    # Verify signature
     body = f"{razorpay_order_id}|{razorpay_payment_id}"
     expected_signature = hmac.new(
         settings.RAZORPAY_KEY_SECRET.encode(),
@@ -123,12 +126,15 @@ async def verify_payment(request: Request):
     if expected_signature != razorpay_signature:
         raise HTTPException(status_code=400, detail="Payment verification failed")
 
-    # Find order
     order = await db.orders.find_one({"razorpay_order_id": razorpay_order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    # Update order status
+    # Prevent duplicate verification
+    if order.get("status") == "paid":
+        return {"message": "Payment already verified"}
+
+    # Mark order as paid
     await db.orders.update_one(
         {"razorpay_order_id": razorpay_order_id},
         {"$set": {
@@ -138,26 +144,54 @@ async def verify_payment(request: Request):
         }}
     )
 
-    # Fetch plan
     plan = await db.plans.find_one({"_id": order["plan_id"]})
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
-    # Create subscription
-    expiry_date = datetime.utcnow() + timedelta(days=plan["duration_days"])
+    now = datetime.utcnow()
+
+    # -------------------------
+    # EXTEND SUBSCRIPTION LOGIC
+    # -------------------------
+    existing_subscription = await db.subscriptions.find_one({
+        "user_id": order["user_id"],
+        "creator_id": order["creator_id"],
+        "is_active": True
+    })
+
+    if existing_subscription:
+
+        if existing_subscription["end_date"] > now:
+            # Extend active subscription
+            new_end_date = existing_subscription["end_date"] + timedelta(days=plan["duration_days"])
+        else:
+            # Restart expired subscription
+            new_end_date = now + timedelta(days=plan["duration_days"])
+
+        await db.subscriptions.update_one(
+            {"_id": existing_subscription["_id"]},
+            {"$set": {
+                "end_date": new_end_date,
+                "updated_at": now
+            }}
+        )
+
+        return {"message": "Subscription extended successfully"}
+
+    # Create new subscription
+    start_date = now
+    end_date = now + timedelta(days=plan["duration_days"])
 
     subscription_data = {
         "user_id": order["user_id"],
         "creator_id": order["creator_id"],
         "plan_id": order["plan_id"],
-        "start_date": datetime.utcnow(),
-        "expiry_date": expiry_date,
-        "status": "active",
-        "created_at": datetime.utcnow()
+        "start_date": start_date,
+        "end_date": end_date,
+        "is_active": True,
+        "created_at": now
     }
 
     await db.subscriptions.insert_one(subscription_data)
 
-    return {
-        "message": "Payment verified and subscription activated"
-    }
+    return {"message": "Payment verified and subscription activated"}
