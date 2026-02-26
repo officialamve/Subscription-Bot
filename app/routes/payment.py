@@ -22,10 +22,42 @@ razorpay_client = razorpay.Client(
 @router.post("/payment/create-order")
 async def create_order(plan_id: str, user_id: int):
 
-    plan = await db.plans.find_one({"_id": ObjectId(plan_id), "is_active": True})
+    try:
+        object_id = ObjectId(plan_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid plan_id")
+
+    plan = await db.plans.find_one({"_id": object_id, "is_active": True})
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
+    # 1️⃣ Prevent duplicate active subscription
+    existing_subscription = await db.subscriptions.find_one({
+        "user_id": user_id,
+        "creator_id": plan["creator_id"],
+        "is_active": True,
+        "end_date": {"$gt": datetime.utcnow()}
+    })
+
+    if existing_subscription:
+        raise HTTPException(status_code=400, detail="Already subscribed")
+
+    # 2️⃣ Reuse existing pending order
+    existing_order = await db.orders.find_one({
+        "user_id": user_id,
+        "plan_id": object_id,
+        "status": "created"
+    })
+
+    if existing_order:
+        return {
+            "order_id": existing_order["razorpay_order_id"],
+            "amount": existing_order["amount"] * 100,
+            "currency": "INR",
+            "key_id": settings.RAZORPAY_KEY_ID
+        }
+
+    # 3️⃣ Create new Razorpay order
     amount_paise = plan["price"] * 100
 
     order = razorpay_client.order.create({
@@ -36,7 +68,7 @@ async def create_order(plan_id: str, user_id: int):
 
     order_data = {
         "user_id": user_id,
-        "plan_id": ObjectId(plan_id),
+        "plan_id": object_id,
         "creator_id": plan["creator_id"],
         "razorpay_order_id": order["id"],
         "amount": plan["price"],
