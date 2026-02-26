@@ -11,10 +11,16 @@ from app.config import settings
 
 router = APIRouter()
 
+import requests
+
+session = requests.Session()
+session.timeout = 10
+
 razorpay_client = razorpay.Client(
     auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
 )
 
+razorpay_client.session = session
 
 # -------------------------
 # CREATE ORDER
@@ -58,13 +64,15 @@ async def create_order(plan_id: str, user_id: int):
         }
 
     # 3️⃣ Create new Razorpay order
-    amount_paise = plan["price"] * 100
-
-    order = razorpay_client.order.create({
-        "amount": amount_paise,
-        "currency": "INR",
-        "payment_capture": 1
-    })
+    try:
+        order = razorpay_client.order.create({
+            "amount": amount_paise,
+            "currency": "INR",
+            "payment_capture": 1
+        })
+    except Exception as e:
+        print("Razorpay Error:", str(e))
+        raise HTTPException(status_code=500, detail="Payment gateway connection failed")
 
     order_data = {
         "user_id": user_id,
