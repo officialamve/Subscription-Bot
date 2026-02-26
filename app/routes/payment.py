@@ -60,7 +60,10 @@ async def create_order(plan_id: str, user_id: int):
 @router.post("/payment/verify")
 async def verify_payment(request: Request):
 
-    data = await request.json()
+    try:
+        data = await request.json()
+    except:
+        raise HTTPException(status_code=400, detail="Invalid or empty JSON body")
 
     razorpay_order_id = data.get("razorpay_order_id")
     razorpay_payment_id = data.get("razorpay_payment_id")
