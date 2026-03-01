@@ -6,9 +6,12 @@ from fastapi import APIRouter, HTTPException, Request
 from bson import ObjectId
 from datetime import datetime, timedelta
 
+from telegram import Bot
+
 from app.database import db
 from app.config import settings
 from app.utils.telegram import generate_invite_link
+from app.utils.encryption import decrypt_token
 
 router = APIRouter()
 
@@ -58,7 +61,7 @@ async def create_payment_link(plan_id: str, user_id: int):
         print("Razorpay error:", str(e))
         raise HTTPException(status_code=500, detail="Payment gateway error")
 
-    order_data = {
+    await db.orders.insert_one({
         "user_id": user_id,
         "plan_id": object_id,
         "creator_id": plan["creator_id"],
@@ -67,13 +70,10 @@ async def create_payment_link(plan_id: str, user_id: int):
         "amount": plan["price"],
         "status": "created",
         "created_at": datetime.utcnow()
-    }
+    })
 
-    await db.orders.insert_one(order_data)
+    return {"payment_url": payment["short_url"]}
 
-    return {
-        "payment_url": payment["short_url"]
-    }
 
 # =========================================================
 # WEBHOOK
@@ -97,21 +97,24 @@ async def razorpay_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid signature")
 
     payload = await request.json()
-
     event = payload.get("event")
 
-    # Only handle successful payment link event
+    # Only handle successful payment link
     if event != "payment_link.paid":
         return {"message": "Ignored"}
 
-    payment_entity = payload["payload"]["payment_link"]["entity"]
+    try:
+        payment_entity = payload["payload"]["payment_link"]["entity"]
+        payment_link_id = payment_entity["id"]
+        notes = payment_entity.get("notes", {})
 
-    payment_link_id = payment_entity["id"]
-    notes = payment_entity.get("notes", {})
+        user_id = int(notes.get("user_id"))
+        plan_id = ObjectId(notes.get("plan_id"))
+        creator_id = ObjectId(notes.get("creator_id"))
 
-    user_id = int(notes["user_id"])
-    plan_id = ObjectId(notes["plan_id"])
-    creator_id = ObjectId(notes["creator_id"])
+    except Exception as e:
+        print("Webhook parsing error:", e)
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
 
     order = await db.orders.find_one({
         "razorpay_payment_link_id": payment_link_id
@@ -120,10 +123,11 @@ async def razorpay_webhook(request: Request):
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    # Prevent double processing
     if order["status"] == "paid":
         return {"message": "Already processed"}
 
-    # Mark order paid
+    # Mark order as paid
     await db.orders.update_one(
         {"_id": order["_id"]},
         {"$set": {
@@ -139,6 +143,10 @@ async def razorpay_webhook(request: Request):
         raise HTTPException(status_code=404, detail="Data missing")
 
     now = datetime.utcnow()
+
+    # ===============================
+    # SUBSCRIPTION LOGIC
+    # ===============================
 
     existing_subscription = await db.subscriptions.find_one({
         "user_id": user_id,
@@ -160,7 +168,7 @@ async def razorpay_webhook(request: Request):
             }}
         )
     else:
-        subscription_data = {
+        await db.subscriptions.insert_one({
             "user_id": user_id,
             "creator_id": creator_id,
             "plan_id": plan_id,
@@ -168,18 +176,30 @@ async def razorpay_webhook(request: Request):
             "end_date": now + timedelta(days=plan["duration_days"]),
             "is_active": True,
             "created_at": now
-        }
+        })
 
-        await db.subscriptions.insert_one(subscription_data)
+    # ===============================
+    # TELEGRAM MESSAGE SENDING
+    # ===============================
 
-    group_id = creator["group_ids"][0]
+    try:
+        group_id = creator["group_ids"][0]
 
-    invite_link = await generate_invite_link(
-        creator["bot_token_encrypted"],
-        group_id
-    )
+        invite_link = await generate_invite_link(
+            creator["bot_token_encrypted"],
+            group_id
+        )
 
-    return {
-        "message": "Subscription activated",
-        "join_link": invite_link
-    }
+        bot_token = decrypt_token(creator["bot_token_encrypted"])
+        bot = Bot(token=bot_token)
+
+        await bot.send_message(
+            chat_id=user_id,
+            text=f"✅ Payment Successful!\n\nClick below to join your premium group:\n{invite_link}"
+        )
+
+    except Exception as e:
+        # Do NOT break webhook if Telegram fails
+        print("Telegram send error:", e)
+
+    return {"message": "Subscription activated"}
