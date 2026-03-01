@@ -105,7 +105,11 @@ async def create_payment_link(plan_id: str, user_id: int):
 async def razorpay_webhook(request: Request):
 
     body = await request.body()
-    signature = request.headers.get("X-Razorpay-Signature")
+
+    signature = request.headers.get("x-razorpay-signature")
+
+    if not signature:
+        raise HTTPException(status_code=400, detail="Missing Razorpay signature")
 
     expected_signature = hmac.new(
         settings.RAZORPAY_KEY_SECRET.encode(),

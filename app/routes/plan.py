@@ -6,7 +6,6 @@ from app.models.plan_model import PlanCreate
 
 router = APIRouter()
 
-
 @router.post("/creator/{creator_id}/plan")
 async def create_plan(creator_id: str, data: PlanCreate):
     creator = await db.creators.find_one({"_id": ObjectId(creator_id)})
@@ -30,7 +29,6 @@ async def create_plan(creator_id: str, data: PlanCreate):
         "message": "Plan created successfully",
         "plan_id": str(result.inserted_id)
     }
-
 
 @router.get("/creator/{creator_id}/plans")
 async def list_plans(creator_id: str):
