@@ -12,13 +12,10 @@ from app.utils.telegram import generate_invite_link
 
 router = APIRouter()
 
-# -------------------------
-# Razorpay Client Setup
-# -------------------------
+# Razorpay client
 razorpay_client = razorpay.Client(
     auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
 )
-
 
 # =========================================================
 # CREATE PAYMENT LINK
@@ -39,23 +36,6 @@ async def create_payment_link(plan_id: str, user_id: int):
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
-    # Prevent duplicate unpaid link
-    existing = await db.orders.find_one({
-        "user_id": user_id,
-        "plan_id": object_id,
-        "status": "created"
-    })
-
-    if existing:
-        if "payment_url" in existing:
-            return {
-                "payment_url": existing["payment_url"]
-            }
-        else:
-            # Old order without payment_url → delete it
-            await db.orders.delete_one({"_id": existing["_id"]})
-
-    # Create Razorpay Payment Link
     try:
         payment = razorpay_client.payment_link.create({
             "amount": plan["price"] * 100,
@@ -74,11 +54,9 @@ async def create_payment_link(plan_id: str, user_id: int):
                 "creator_id": str(plan["creator_id"])
             }
         })
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Payment gateway error"
-        )
+    except Exception as e:
+        print("Razorpay error:", str(e))
+        raise HTTPException(status_code=500, detail="Payment gateway error")
 
     order_data = {
         "user_id": user_id,
@@ -97,33 +75,32 @@ async def create_payment_link(plan_id: str, user_id: int):
         "payment_url": payment["short_url"]
     }
 
-
 # =========================================================
-# RAZORPAY WEBHOOK (PAYMENT SUCCESS)
+# WEBHOOK
 # =========================================================
 @router.post("/payment/webhook")
 async def razorpay_webhook(request: Request):
 
     body = await request.body()
-
     signature = request.headers.get("x-razorpay-signature")
 
     if not signature:
-        raise HTTPException(status_code=400, detail="Missing Razorpay signature")
+        raise HTTPException(status_code=400, detail="Missing signature")
 
-    expected_signature = hmac.new(
+    generated_signature = hmac.new(
         settings.RAZORPAY_KEY_SECRET.encode(),
         body,
         hashlib.sha256
     ).hexdigest()
 
-    if not hmac.compare_digest(expected_signature, signature):
+    if not hmac.compare_digest(generated_signature, signature):
         raise HTTPException(status_code=400, detail="Invalid signature")
 
     payload = await request.json()
+
     event = payload.get("event")
 
-    # We only care about successful payment
+    # Only handle successful payment link event
     if event != "payment_link.paid":
         return {"message": "Ignored"}
 
@@ -146,7 +123,7 @@ async def razorpay_webhook(request: Request):
     if order["status"] == "paid":
         return {"message": "Already processed"}
 
-    # Mark order as paid
+    # Mark order paid
     await db.orders.update_one(
         {"_id": order["_id"]},
         {"$set": {
@@ -163,9 +140,6 @@ async def razorpay_webhook(request: Request):
 
     now = datetime.utcnow()
 
-    # -------------------------
-    # EXTEND EXISTING SUBSCRIPTION
-    # -------------------------
     existing_subscription = await db.subscriptions.find_one({
         "user_id": user_id,
         "creator_id": creator_id,
@@ -185,24 +159,19 @@ async def razorpay_webhook(request: Request):
                 "updated_at": now
             }}
         )
-
     else:
-        start_date = now
-        end_date = now + timedelta(days=plan["duration_days"])
-
         subscription_data = {
             "user_id": user_id,
             "creator_id": creator_id,
             "plan_id": plan_id,
-            "start_date": start_date,
-            "end_date": end_date,
+            "start_date": now,
+            "end_date": now + timedelta(days=plan["duration_days"]),
             "is_active": True,
             "created_at": now
         }
 
         await db.subscriptions.insert_one(subscription_data)
 
-    # Generate invite link
     group_id = creator["group_ids"][0]
 
     invite_link = await generate_invite_link(
