@@ -47,9 +47,13 @@ async def create_payment_link(plan_id: str, user_id: int):
     })
 
     if existing:
-        return {
-            "payment_url": existing["payment_url"]
-        }
+        if "payment_url" in existing:
+            return {
+                "payment_url": existing["payment_url"]
+            }
+        else:
+            # Old order without payment_url → delete it
+            await db.orders.delete_one({"_id": existing["_id"]})
 
     # Create Razorpay Payment Link
     try:
