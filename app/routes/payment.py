@@ -88,7 +88,7 @@ async def razorpay_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Missing signature")
 
     generated_signature = hmac.new(
-        settings.RAZORPAY_KEY_SECRET.encode(),
+        settings.RAZORPAY_WEBHOOK_SECRET.encode(),
         body,
         hashlib.sha256
     ).hexdigest()
