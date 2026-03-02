@@ -10,8 +10,6 @@ from telegram import Bot
 
 from app.database import db
 from app.config import settings
-from app.utils.telegram import generate_invite_link
-from app.utils.encryption import decrypt_token
 
 router = APIRouter()
 
@@ -99,7 +97,6 @@ async def razorpay_webhook(request: Request):
     payload = await request.json()
     event = payload.get("event")
 
-    # Only handle successful payment link
     if event != "payment_link.paid":
         return {"message": "Ignored"}
 
@@ -123,7 +120,6 @@ async def razorpay_webhook(request: Request):
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    # Prevent double processing
     if order["status"] == "paid":
         return {"message": "Already processed"}
 
@@ -144,9 +140,9 @@ async def razorpay_webhook(request: Request):
 
     now = datetime.utcnow()
 
-    # ===============================
+    # =====================================================
     # SUBSCRIPTION LOGIC
-    # ===============================
+    # =====================================================
 
     existing_subscription = await db.subscriptions.find_one({
         "user_id": user_id,
@@ -178,28 +174,33 @@ async def razorpay_webhook(request: Request):
             "created_at": now
         })
 
-    # ===============================
-    # TELEGRAM MESSAGE SENDING
-    # ===============================
+    # =====================================================
+    # TELEGRAM MESSAGE (PLATFORM BOT)
+    # =====================================================
 
     try:
+        bot = Bot(token=settings.PLATFORM_BOT_TOKEN)
+
         group_id = creator["group_ids"][0]
 
-        invite_link = await generate_invite_link(
-            creator["bot_token_encrypted"],
-            group_id
+        # 1-time link, 48h expiry
+        invite_link = await bot.create_chat_invite_link(
+            chat_id=group_id,
+            member_limit=1,
+            expire_date=int((datetime.utcnow() + timedelta(hours=48)).timestamp())
         )
-
-        bot_token = decrypt_token(creator["bot_token_encrypted"])
-        bot = Bot(token=bot_token)
 
         await bot.send_message(
             chat_id=user_id,
-            text=f"✅ Payment Successful!\n\nClick below to join your premium group:\n{invite_link}"
+            text=(
+                "✅ Payment Successful!\n\n"
+                "Click below to join your premium group:\n"
+                f"{invite_link.invite_link}\n\n"
+                "⚠️ Link valid for 48 hours and 1 use only."
+            )
         )
 
     except Exception as e:
-        # Do NOT break webhook if Telegram fails
         print("Telegram send error:", e)
 
     return {"message": "Subscription activated"}
