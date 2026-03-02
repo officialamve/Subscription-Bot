@@ -69,6 +69,6 @@ async def get_creator_by_telegram(telegram_id: int):
 
     return {
         "id": str(creator["_id"]),
-        "name": creator["name"],
+        "name": creator.get("name", "Creator"),
         "creator_code": creator["creator_code"]
     }
