@@ -55,3 +55,20 @@ async def get_creator_by_code(creator_code: str):
         "id": str(creator["_id"]),
         "name": creator["name"]
     }
+
+@router.get("/creator/by-telegram/{telegram_id}")
+async def get_creator_by_telegram(telegram_id: int):
+
+    creator = await db.creators.find_one({
+        "telegram_id": telegram_id,
+        "is_active": True
+    })
+
+    if not creator:
+        return None
+
+    return {
+        "id": str(creator["_id"]),
+        "name": creator["name"],
+        "creator_code": creator["creator_code"]
+    }
