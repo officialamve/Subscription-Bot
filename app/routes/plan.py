@@ -31,17 +31,19 @@ async def create_plan(creator_id: str, data: PlanCreate):
     }
 
 @router.get("/creator/{creator_id}/plans")
-async def list_plans(creator_id: str):
-    plans_cursor = db.plans.find({"creator_id": ObjectId(creator_id), "is_active": True})
+async def get_creator_plans(creator_id: str):
 
     plans = []
-    async for plan in plans_cursor:
+    async for plan in db.plans.find({
+        "creator_id": ObjectId(creator_id),
+        "is_active": True
+    }):
         plans.append({
             "id": str(plan["_id"]),
             "name": plan["name"],
             "price": plan["price"],
             "duration_days": plan["duration_days"],
-            "description": plan.get("description")
+            "description": plan.get("description", "")
         })
 
-    return {"plans": plans}
+    return plans

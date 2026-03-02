@@ -39,3 +39,19 @@ async def register_creator(data: CreatorCreate):
         "message": "Creator registered successfully",
         "creator_code": creator_code
     }
+
+@router.get("/creator/by-code/{creator_code}")
+async def get_creator_by_code(creator_code: str):
+
+    creator = await db.creators.find_one({
+        "creator_code": creator_code,
+        "is_active": True
+    })
+
+    if not creator:
+        return None
+
+    return {
+        "id": str(creator["_id"]),
+        "name": creator["name"]
+    }
