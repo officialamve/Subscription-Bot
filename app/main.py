@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.routes import health, creator, plan, payment
-from app.services.expiry_service import remove_expired_subscriptions
+from app.services.subscription_cleanup import remove_expired_subscriptions
 
 
 # -------------------------
@@ -40,14 +40,17 @@ scheduler = AsyncIOScheduler()
 
 
 @app.on_event("startup")
-async def startup_event():
+async def start_scheduler():
     print("🚀 Application started")
+
     scheduler.add_job(
         remove_expired_subscriptions,
         trigger="interval",
-        minutes=5
+        minutes=10
     )
+
     scheduler.start()
+    print("⏳ Expiry scheduler started (runs every 10 minutes)")
 
 
 @app.on_event("shutdown")
