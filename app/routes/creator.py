@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from datetime import datetime
 import secrets
 
@@ -12,11 +12,16 @@ router = APIRouter()
 @router.post("/creator/register")
 async def register_creator(data: CreatorCreate):
 
+    # Check if creator already exists
     existing = await db.creators.find_one({"telegram_id": data.telegram_id})
-    if existing:
-        raise HTTPException(status_code=400, detail="Creator already exists")
 
-    # 🔥 Generate unique creator code
+    if existing:
+        return {
+            "message": "Creator already exists",
+            "creator_code": existing["creator_code"]
+        }
+
+    # Generate unique creator code
     creator_code = secrets.token_hex(4)
 
     while await db.creators.find_one({"creator_code": creator_code}):
@@ -27,7 +32,7 @@ async def register_creator(data: CreatorCreate):
     creator_data = {
         "telegram_id": data.telegram_id,
         "name": data.name,
-        "creator_code": creator_code,   # IMPORTANT
+        "creator_code": creator_code,
         "bot_token_encrypted": encrypted_token,
         "group_ids": data.group_ids,
         "created_at": datetime.utcnow(),
@@ -38,5 +43,5 @@ async def register_creator(data: CreatorCreate):
 
     return {
         "message": "Creator registered successfully",
-        "creator_code": creator_code   # 🔥 MUST RETURN THIS
+        "creator_code": creator_code
     }
