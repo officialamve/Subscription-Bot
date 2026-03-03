@@ -8,4 +8,3 @@ cryptography
 apscheduler
 razorpay
 python-telegram-bot
-apscheduler

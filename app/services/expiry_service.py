@@ -1,7 +1,6 @@
 from datetime import datetime
 from telegram import Bot
 from app.database import db
-from app.utils.encryption import decrypt_token
 
 
 async def remove_expired_subscriptions():
