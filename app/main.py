@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.routes import health, creator, plan, payment
+from app.routes import health, creator, plan, payment, user
 from app.services.subscription_cleanup import remove_expired_subscriptions
 
 app = FastAPI(title="Telegram Subscription Platform")
@@ -19,6 +19,7 @@ app.include_router(health.router)
 app.include_router(creator.router)
 app.include_router(plan.router)
 app.include_router(payment.router)
+app.include_router(user.router)   # 🔥 IMPORTANT
 
 scheduler = AsyncIOScheduler()
 

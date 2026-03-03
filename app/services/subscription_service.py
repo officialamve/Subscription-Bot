@@ -1,5 +1,5 @@
 from datetime import datetime
-from bson import ObjectId
+
 
 async def get_user_subscriptions(db, telegram_id: int):
     now = datetime.utcnow()
@@ -26,17 +26,17 @@ async def get_user_subscriptions(db, telegram_id: int):
         {"$unwind": "$creator"},
         {
             "$project": {
-                "_id": 0,
+                "plan_id": {"$toString": "$plan._id"},
                 "creator_name": "$creator.name",
                 "plan_name": "$plan.name",
                 "price": "$plan.price",
-                "end_date": 1,
-                "status": 1
+                "end_date": 1
             }
         }
     ]
 
-    data = []
+    results = []
+
     async for sub in db.subscriptions.aggregate(pipeline):
         end_date = sub["end_date"]
         days_remaining = (end_date - now).days
@@ -44,6 +44,6 @@ async def get_user_subscriptions(db, telegram_id: int):
         sub["days_remaining"] = max(days_remaining, 0)
         sub["status"] = "active" if end_date > now else "expired"
 
-        data.append(sub)
+        results.append(sub)
 
-    return data
+    return results
