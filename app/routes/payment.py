@@ -171,6 +171,7 @@ async def razorpay_webhook(request: Request):
             "start_date": now,
             "end_date": now + timedelta(days=plan["duration_days"]),
             "is_active": True,
+            "invite_sent": False,
             "created_at": now
         })
 

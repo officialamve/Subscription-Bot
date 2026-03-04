@@ -4,6 +4,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.routes import health, creator, plan, payment, user
 from app.services.subscription_cleanup import remove_expired_subscriptions
+from app.routes import subscription
 
 app = FastAPI(title="Telegram Subscription Platform")
 
@@ -20,6 +21,7 @@ app.include_router(creator.router)
 app.include_router(plan.router)
 app.include_router(payment.router)
 app.include_router(user.router)   # 🔥 IMPORTANT
+app.include_router(subscription.router)
 
 scheduler = AsyncIOScheduler()
 
