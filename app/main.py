@@ -6,6 +6,19 @@ from app.routes import health, creator, plan, payment, user
 from app.services.subscription_cleanup import remove_expired_subscriptions
 from app.routes import subscription
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from app.scheduler.renewal_reminder import send_renewal_reminders
+
+scheduler = AsyncIOScheduler()
+
+scheduler.add_job(
+    send_renewal_reminders,
+    "interval",
+    hours=6
+)
+
+scheduler.start()
+
 app = FastAPI(title="Telegram Subscription Platform")
 
 app.add_middleware(

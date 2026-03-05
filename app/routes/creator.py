@@ -111,9 +111,11 @@ async def creator_dashboard(telegram_id: int):
         "is_active": True
     })
 
+    now = datetime.utcnow()
+
     subscribers_count = await db.subscriptions.count_documents({
         "creator_id": creator_id,
-        "is_active": True
+        "end_date": {"$gt": now}
     })
 
     return {
