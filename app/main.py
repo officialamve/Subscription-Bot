@@ -2,22 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.routes import health, creator, plan, payment, user
+from app.routes import health, creator, plan, payment, user, subscription
 from app.services.subscription_cleanup import remove_expired_subscriptions
-from app.routes import subscription
-
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.scheduler.renewal_reminder import send_renewal_reminders
-
-scheduler = AsyncIOScheduler()
-
-scheduler.add_job(
-    send_renewal_reminders,
-    "interval",
-    hours=6
-)
-
-scheduler.start()
 
 app = FastAPI(title="Telegram Subscription Platform")
 
@@ -33,13 +20,15 @@ app.include_router(health.router)
 app.include_router(creator.router)
 app.include_router(plan.router)
 app.include_router(payment.router)
-app.include_router(user.router)   # 🔥 IMPORTANT
+app.include_router(user.router)
 app.include_router(subscription.router)
 
 scheduler = AsyncIOScheduler()
 
+
 @app.on_event("startup")
-async def start_scheduler():
+async def startup_event():
+
     print("🚀 Backend started")
 
     scheduler.add_job(
@@ -48,7 +37,14 @@ async def start_scheduler():
         minutes=10
     )
 
+    scheduler.add_job(
+        send_renewal_reminders,
+        trigger="interval",
+        hours=6
+    )
+
     scheduler.start()
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
