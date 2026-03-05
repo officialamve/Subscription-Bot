@@ -202,6 +202,8 @@ async def razorpay_webhook(request: Request):
         )
 
     except Exception as e:
-        print("Telegram send error:", e)
+        import traceback
+        print("TELEGRAM ERROR OCCURRED")
+        traceback.print_exc()
 
     return {"message": "Subscription activated"}
