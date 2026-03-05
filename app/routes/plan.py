@@ -40,7 +40,8 @@ async def create_plan(creator_id: str, data: PlanCreate):
         "name": data.name.strip(),
         "price": data.price,
         "duration_days": data.duration_days,
-        "description": data.description.strip() if data.description else "",
+        "description": data.description or "",
+        "max_users": data.max_users,
         "is_active": True,
         "created_at": datetime.utcnow()
     }
@@ -48,11 +49,13 @@ async def create_plan(creator_id: str, data: PlanCreate):
     result = await db.plans.insert_one(plan_data)
 
     return {
-        "plan_id": str(result.inserted_id),
+        "id": str(result.inserted_id),
         "name": plan_data["name"],
         "price": plan_data["price"],
-        "duration_days": plan_data["duration_days"]
+        "duration_days": plan_data["duration_days"],
+        "max_users": plan_data["max_users"]
     }
+
 
 # =========================================================
 # GET CREATOR PLANS
@@ -74,7 +77,8 @@ async def get_creator_plans(creator_id: str):
             "name": plan["name"],
             "price": plan["price"],
             "duration_days": plan["duration_days"],
-            "description": plan.get("description", "")
+            "description": plan.get("description", ""),
+            "max_users": plan.get("max_users", 1)
         })
 
     return plans
@@ -90,20 +94,26 @@ async def update_plan(plan_id: str, data: dict):
 
     update_fields = {}
 
-    if "name" in data and isinstance(data["name"], str):
+    if "name" in data:
         update_fields["name"] = data["name"].strip()
 
-    if "price" in data and isinstance(data["price"], int):
+    if "price" in data:
         update_fields["price"] = data["price"]
 
-    if "duration_days" in data and isinstance(data["duration_days"], int):
+    if "duration_days" in data:
         update_fields["duration_days"] = data["duration_days"]
 
+    if "description" in data:
+        update_fields["description"] = data["description"]
+
+    if "max_users" in data:
+        update_fields["max_users"] = data["max_users"]
+
     if not update_fields:
-        raise HTTPException(status_code=400, detail="No valid fields to update")
+        raise HTTPException(status_code=400, detail="No valid fields")
 
     result = await db.plans.update_one(
-        {"_id": plan_object_id, "is_active": True},
+        {"_id": plan_object_id},
         {"$set": update_fields}
     )
 
@@ -121,15 +131,13 @@ async def pause_plan(plan_id: str):
 
     plan_object_id = validate_object_id(plan_id)
 
-    result = await db.plans.update_one(
-        {"_id": plan_object_id, "is_active": True},
+    await db.plans.update_one(
+        {"_id": plan_object_id},
         {"$set": {"is_active": False}}
     )
 
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Plan not found or already paused")
-
     return {"message": "Plan paused successfully"}
+
 
 # =========================================================
 # RESUME PLAN
@@ -139,15 +147,13 @@ async def resume_plan(plan_id: str):
 
     plan_object_id = validate_object_id(plan_id)
 
-    result = await db.plans.update_one(
-        {"_id": plan_object_id, "is_active": False},
+    await db.plans.update_one(
+        {"_id": plan_object_id},
         {"$set": {"is_active": True}}
     )
 
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Plan not found or already active")
-
     return {"message": "Plan resumed successfully"}
+
 
 # =========================================================
 # PLAN STATS
@@ -157,26 +163,22 @@ async def get_plan_stats(plan_id: str):
 
     plan_object_id = validate_object_id(plan_id)
 
-    plan = await db.plans.find_one({
-        "_id": plan_object_id,
-        "is_active": True
-    })
+    plan = await db.plans.find_one({"_id": plan_object_id})
 
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
-    # Total subscriptions (lifetime)
+    now = datetime.utcnow()
+
     total_subscribers = await db.subscriptions.count_documents({
         "plan_id": plan_object_id
     })
 
-    # Active subscriptions
     active_users = await db.subscriptions.count_documents({
         "plan_id": plan_object_id,
-        "is_active": True
+        "end_date": {"$gt": now}
     })
 
-    # Total revenue (sum of paid orders)
     pipeline = [
         {
             "$match": {
@@ -200,6 +202,7 @@ async def get_plan_stats(plan_id: str):
         "price": plan["price"],
         "duration_days": plan["duration_days"],
         "description": plan.get("description", ""),
+        "max_users": plan.get("max_users", 1),
         "total_subscribers": total_subscribers,
         "active_users": active_users,
         "total_revenue": total_revenue

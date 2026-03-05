@@ -1,8 +1,9 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Optional
 
 class PlanCreate(BaseModel):
-    name: str = Field(..., min_length=1)
+    name: str
     price: int
     duration_days: int
     description: Optional[str] = ""
+    max_users: int = 1

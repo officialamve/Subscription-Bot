@@ -26,8 +26,8 @@ async def create_payment_link(plan_id: str, user_id: int):
 
     try:
         object_id = ObjectId(plan_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid plan_id")
+    except:
+        raise HTTPException(status_code=400, detail="Invalid plan id")
 
     plan = await db.plans.find_one({
         "_id": object_id,
@@ -37,26 +37,32 @@ async def create_payment_link(plan_id: str, user_id: int):
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
-    try:
-        payment = razorpay_client.payment_link.create({
-            "amount": plan["price"] * 100,
-            "currency": "INR",
-            "description": plan["name"],
-            "customer": {
-                "name": f"Telegram User {user_id}"
-            },
-            "notify": {
-                "sms": False,
-                "email": False
-            },
-            "notes": {
-                "user_id": str(user_id),
-                "plan_id": str(plan_id),
-                "creator_id": str(plan["creator_id"])
-            }
-        })
-    except Exception as e:
-        print("Razorpay error:", str(e))
+    # Razorpay retry (2 attempts)
+    payment = None
+    for _ in range(2):
+        try:
+            payment = razorpay_client.payment_link.create({
+                "amount": plan["price"] * 100,
+                "currency": "INR",
+                "description": plan["name"],
+                "customer": {
+                    "name": f"Telegram User {user_id}"
+                },
+                "notify": {
+                    "sms": False,
+                    "email": False
+                },
+                "notes": {
+                    "user_id": str(user_id),
+                    "plan_id": str(plan_id),
+                    "creator_id": str(plan["creator_id"])
+                }
+            })
+            break
+        except Exception as e:
+            print("Razorpay error:", e)
+
+    if not payment:
         raise HTTPException(status_code=500, detail="Payment gateway error")
 
     await db.orders.insert_one({
@@ -70,11 +76,13 @@ async def create_payment_link(plan_id: str, user_id: int):
         "created_at": datetime.utcnow()
     })
 
-    return {"payment_url": payment["short_url"]}
+    return {
+        "payment_url": payment["short_url"]
+    }
 
 
 # =========================================================
-# WEBHOOK
+# RAZORPAY WEBHOOK
 # =========================================================
 @router.post("/payment/webhook")
 async def razorpay_webhook(request: Request):
@@ -95,23 +103,18 @@ async def razorpay_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid signature")
 
     payload = await request.json()
-    event = payload.get("event")
 
-    if event != "payment_link.paid":
+    if payload.get("event") != "payment_link.paid":
         return {"message": "Ignored"}
 
-    try:
-        payment_entity = payload["payload"]["payment_link"]["entity"]
-        payment_link_id = payment_entity["id"]
-        notes = payment_entity.get("notes", {})
+    entity = payload["payload"]["payment_link"]["entity"]
 
-        user_id = int(notes.get("user_id"))
-        plan_id = ObjectId(notes.get("plan_id"))
-        creator_id = ObjectId(notes.get("creator_id"))
+    payment_link_id = entity["id"]
+    notes = entity.get("notes", {})
 
-    except Exception as e:
-        print("Webhook parsing error:", e)
-        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+    user_id = int(notes.get("user_id"))
+    plan_id = ObjectId(notes.get("plan_id"))
+    creator_id = ObjectId(notes.get("creator_id"))
 
     order = await db.orders.find_one({
         "razorpay_payment_link_id": payment_link_id
@@ -123,7 +126,6 @@ async def razorpay_webhook(request: Request):
     if order["status"] == "paid":
         return {"message": "Already processed"}
 
-    # Mark order as paid
     await db.orders.update_one(
         {"_id": order["_id"]},
         {"$set": {
@@ -141,29 +143,29 @@ async def razorpay_webhook(request: Request):
     now = datetime.utcnow()
 
     # =====================================================
-    # SUBSCRIPTION LOGIC
+    # CREATE / EXTEND SUBSCRIPTION
     # =====================================================
 
-    existing_subscription = await db.subscriptions.find_one({
+    existing = await db.subscriptions.find_one({
         "user_id": user_id,
         "creator_id": creator_id,
         "is_active": True
     })
 
-    if existing_subscription:
-        if existing_subscription["end_date"] > now:
-            new_end_date = existing_subscription["end_date"] + timedelta(days=plan["duration_days"])
+    if existing:
+
+        if existing["end_date"] > now:
+            new_end = existing["end_date"] + timedelta(days=plan["duration_days"])
         else:
-            new_end_date = now + timedelta(days=plan["duration_days"])
+            new_end = now + timedelta(days=plan["duration_days"])
 
         await db.subscriptions.update_one(
-            {"_id": existing_subscription["_id"]},
-            {"$set": {
-                "end_date": new_end_date,
-                "updated_at": now
-            }}
+            {"_id": existing["_id"]},
+            {"$set": {"end_date": new_end}}
         )
+
     else:
+
         await db.subscriptions.insert_one({
             "user_id": user_id,
             "creator_id": creator_id,
@@ -171,23 +173,22 @@ async def razorpay_webhook(request: Request):
             "start_date": now,
             "end_date": now + timedelta(days=plan["duration_days"]),
             "is_active": True,
-            "invite_sent": False,
             "created_at": now
         })
 
     # =====================================================
-    # TELEGRAM MESSAGE (PLATFORM BOT)
+    # SEND TELEGRAM INVITE LINK
     # =====================================================
 
     try:
+
         bot = Bot(token=settings.PLATFORM_BOT_TOKEN)
 
         group_id = creator["group_ids"][0]
 
-        # 1-time link, 48h expiry
         invite_link = await bot.create_chat_invite_link(
             chat_id=group_id,
-            member_limit=1,
+            member_limit=plan.get("max_users", 1)
             expire_date=int((datetime.utcnow() + timedelta(hours=48)).timestamp())
         )
 
@@ -195,7 +196,7 @@ async def razorpay_webhook(request: Request):
             chat_id=user_id,
             text=(
                 "✅ Payment Successful!\n\n"
-                "Click below to join your premium group:\n"
+                "Click below to join your premium group:\n\n"
                 f"{invite_link.invite_link}\n\n"
                 "⚠️ Link valid for 48 hours and 1 use only."
             )
