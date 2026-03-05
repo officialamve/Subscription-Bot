@@ -188,7 +188,7 @@ async def razorpay_webhook(request: Request):
 
         invite_link = await bot.create_chat_invite_link(
             chat_id=group_id,
-            member_limit=plan.get("max_users", 1)
+            member_limit=plan.get("max_users", 1),
             expire_date=int((datetime.utcnow() + timedelta(hours=48)).timestamp())
         )
 
