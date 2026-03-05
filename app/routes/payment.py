@@ -30,14 +30,16 @@ async def create_order(user_id: int, plan_id: str):
     # PLAN LIMIT CHECK
     # =========================
 
-    if plan["max_users"] > 0:
+    max_users = plan.get("max_users", 0)
+
+    if max_users > 0:
 
         active_users = await db.subscriptions.count_documents({
             "plan_id": plan["_id"],
             "end_date": {"$gt": datetime.utcnow()}
         })
 
-        if active_users >= plan["max_users"]:
+        if active_users >= max_users:
             raise HTTPException(400, "Plan is full")
 
     # =========================
@@ -137,6 +139,11 @@ async def razorpay_webhook(payload: dict):
         chat_id=group_id,
         member_limit=1,
         expire_date=int((datetime.utcnow() + timedelta(hours=48)).timestamp())
+    )
+
+    await bot.send_message(
+        chat_id=order["user_id"],
+        text=f"Click to join: {invite_link.invite_link}"
     )
 
     await bot.send_message(
