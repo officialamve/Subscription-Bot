@@ -84,25 +84,38 @@ async def create_order(user_id: int, plan_id: str):
 @router.post("/payment/webhook")
 async def razorpay_webhook(payload: dict):
 
-    payment_link_id = payload.get("payload", {}).get("payment_link", {}).get("entity", {}).get("id")
+    payment_link_id = payload.get(
+        "payload", {}
+    ).get(
+        "payment_link", {}
+    ).get(
+        "entity", {}
+    ).get(
+        "id"
+    )
 
     if not payment_link_id:
         return {"status": "ignored"}
 
-    order = await db.orders.find_one({
-        "razorpay_payment_link_id": payment_link_id
-    })
+    # =========================
+    # ATOMIC UPDATE (PREVENT DUPLICATE WEBHOOK)
+    # =========================
+
+    order = await db.orders.find_one_and_update(
+        {
+            "razorpay_payment_link_id": payment_link_id,
+            "status": "pending"
+        },
+        {
+            "$set": {
+                "status": "paid",
+                "paid_at": datetime.utcnow()
+            }
+        }
+    )
 
     if not order:
-        return {"status": "not_found"}
-
-    if order["status"] == "paid":
         return {"status": "already_processed"}
-
-    await db.orders.update_one(
-        {"_id": order["_id"]},
-        {"$set": {"status": "paid", "paid_at": datetime.utcnow()}}
-    )
 
     # =========================
     # CREATE SUBSCRIPTION
@@ -123,37 +136,25 @@ async def razorpay_webhook(payload: dict):
         "created_at": datetime.utcnow()
     }
 
-    result = await db.subscriptions.insert_one(subscription_data)
+    await db.subscriptions.insert_one(subscription_data)
 
     # =========================
-    # SEND INVITE LINK
+    # SEND ACCESS MESSAGE
     # =========================
 
     creator = await db.creators.find_one({"_id": order["creator_id"]})
 
-    group_id = creator["group_ids"][0]
-
     bot = Bot(token=settings.PLATFORM_BOT_TOKEN)
-
-    invite_link = await bot.create_chat_invite_link(
-        chat_id=group_id,
-        member_limit=1,
-        expire_date=int((datetime.utcnow() + timedelta(hours=48)).timestamp())
-    )
-
-    await bot.send_message(
-        chat_id=order["user_id"],
-        text=f"Click to join: {invite_link.invite_link}"
-    )
 
     await bot.send_message(
         chat_id=order["user_id"],
         text=(
-            "✅ Payment Successful!\n\n"
-            "Click below to join your premium group:\n"
-            f"{invite_link.invite_link}\n\n"
-            "⚠️ Link valid for 48 hours."
-        )
+            "✅ <b>Payment Successful!</b>\n\n"
+            "Click below to request access to the premium group:\n\n"
+            f"https://t.me/{creator['group_username']}\n\n"
+            "Your request will be automatically approved."
+        ),
+        parse_mode="HTML"
     )
 
     return {"status": "ok"}
