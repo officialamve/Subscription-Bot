@@ -126,3 +126,31 @@ async def creator_dashboard(telegram_id: int):
         "plans_count": plans_count,
         "subscribers_count": subscribers_count
     }
+
+@router.get("/creator/{creator_code}/plans-public")
+async def public_plans(creator_code: str):
+
+    creator = await db.creators.find_one({
+        "creator_code": creator_code,
+        "is_active": True
+    })
+
+    if not creator:
+        return []
+
+    plans = []
+
+    async for plan in db.plans.find({
+        "creator_id": creator["_id"],
+        "is_active": True
+    }):
+
+        plans.append({
+            "id": str(plan["_id"]),
+            "name": plan["name"],
+            "price": plan["price"],
+            "duration_days": plan["duration_days"],
+            "description": plan.get("description", "")
+        })
+
+    return plans
