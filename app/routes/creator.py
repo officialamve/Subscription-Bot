@@ -37,7 +37,7 @@ async def register_creator(data: CreatorCreate):
         "name": data.name,
         "creator_code": creator_code,
         "group_ids": data.group_ids,
-        "group_username": data.group_username,
+        "group_usernames": data.group_usernames,
         "created_at": datetime.utcnow(),
         "is_active": True
     }

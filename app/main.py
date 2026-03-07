@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.database import db
+from app.routes import group
 from app.routes import health, creator, plan, payment, user, subscription
 from app.services.subscription_cleanup import remove_expired_subscriptions
 from app.scheduler.renewal_reminder import send_renewal_reminders
@@ -23,6 +24,7 @@ app.include_router(plan.router)
 app.include_router(payment.router)
 app.include_router(user.router)
 app.include_router(subscription.router)
+app.include_router(group.router)
 
 scheduler = AsyncIOScheduler()
 
