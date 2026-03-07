@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from app.database import db
 from app.routes import health, creator, plan, payment, user, subscription
 from app.services.subscription_cleanup import remove_expired_subscriptions
 from app.scheduler.renewal_reminder import send_renewal_reminders
