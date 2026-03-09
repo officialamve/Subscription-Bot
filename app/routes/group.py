@@ -33,3 +33,20 @@ async def create_group(data: GroupCreate):
         "group_id": data.group_id,
         "name": data.name
     }
+
+@router.get("/creator/{creator_id}/groups")
+async def get_creator_groups(creator_id: str):
+
+    groups = []
+
+    async for group in db.groups.find(
+        {"creator_id": ObjectId(creator_id)}
+    ):
+        groups.append({
+            "id": str(group["_id"]),
+            "group_id": group["group_id"],
+            "name": group["name"],
+            "username": group.get("username")
+        })
+
+    return groups
