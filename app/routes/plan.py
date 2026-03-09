@@ -22,40 +22,26 @@ def validate_object_id(id_str: str):
 # =========================================================
 # CREATE PLAN
 # =========================================================
-@router.post("/creator/{creator_id}/plan")
-async def create_plan(creator_id: str, data: PlanCreate):
-
-    creator_object_id = validate_object_id(creator_id)
-
-    creator = await db.creators.find_one({
-        "_id": creator_object_id,
-        "is_active": True
-    })
-
-    if not creator:
-        raise HTTPException(status_code=404, detail="Creator not found")
+@router.post("/plan")
+async def create_plan(data: PlanCreate):
 
     plan_data = {
-        "creator_id": creator_object_id,
-        "name": data.name.strip(),
+        "group_id": ObjectId(data.group_id),
+        "name": data.name,
         "price": data.price,
         "duration_days": data.duration_days,
-        "description": data.description or "",
+        "description": data.description,
         "max_users": data.max_users,
-        "is_active": True,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.utcnow(),
+        "is_active": True
     }
 
     result = await db.plans.insert_one(plan_data)
 
     return {
-        "id": str(result.inserted_id),
-        "name": plan_data["name"],
-        "price": plan_data["price"],
-        "duration_days": plan_data["duration_days"],
-        "max_users": plan_data["max_users"]
+        "plan_id": str(result.inserted_id),
+        "name": data.name
     }
-
 
 # =========================================================
 # GET CREATOR PLANS
